@@ -15,9 +15,9 @@ image build / deployment so the runtime works without outbound network access.
 Environment variables:
     RAPIDOCR_LANG     Recognition language. "eslav" (PP-OCRv5, default) or
                       "cyrillic" (also covers Cyrillic + Latin).
-    RAPIDOCR_BACKEND  Inference backend: "paddle" (default) or "onnxruntime".
-                      "paddle" requires the ``paddlepaddle`` package
-                      (``pip install 'docling-serve[rapidocr-paddle]'``).
+    RAPIDOCR_BACKEND  Inference backend: "onnxruntime" (default) or "paddle".
+                      "onnxruntime" ships with the ``rapidocr`` extra; "paddle"
+                      additionally requires the ``paddlepaddle`` package.
 """
 
 from __future__ import annotations
@@ -34,16 +34,16 @@ _OCR_VERSION_BY_LANG = {
 
 def main() -> int:
     lang = os.environ.get("RAPIDOCR_LANG", "eslav").strip().lower()
-    backend = os.environ.get("RAPIDOCR_BACKEND", "paddle").strip().lower()
+    backend = os.environ.get("RAPIDOCR_BACKEND", "onnxruntime").strip().lower()
     ocr_version = _OCR_VERSION_BY_LANG.get(lang, "PP-OCRv5")
 
     try:
         from rapidocr import RapidOCR
     except ImportError:
         print(
-            "rapidocr is not installed. Install it with one of:\n"
-            "  pip install 'docling-serve[rapidocr]'          # onnxruntime backend\n"
-            "  pip install 'docling-serve[rapidocr-paddle]'   # paddle backend",
+            "rapidocr is not installed. Install it with:\n"
+            "  pip install 'docling-serve[rapidocr]'   # onnxruntime backend\n"
+            "(the 'paddle' backend additionally requires the paddlepaddle package)",
             file=sys.stderr,
         )
         return 1

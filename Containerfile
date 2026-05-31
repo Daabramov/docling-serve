@@ -101,6 +101,22 @@ RUN --mount=from=uv_stage,source=/uv,target=/bin/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     umask 002 && uv sync --frozen --no-dev --all-extras ${UV_SYNC_EXTRA_ARGS}
 
+# Optionally bake RapidOCR Cyrillic (Russian+English) recognition models into the
+# image so the `*-ru_en` flavor works offline. No-op unless RAPIDOCR_BAKE_LANG is set
+# (e.g. "eslav" for East-Slavic PP-OCRv5, or "cyrillic"). Uses the onnxruntime backend,
+# which ships with the rapidocr extra. Models are cached inside the rapidocr package dir
+# and reused at runtime. Runs after the final `uv sync` so they are not wiped.
+ARG RAPIDOCR_BAKE_LANG=""
+RUN if [ -n "${RAPIDOCR_BAKE_LANG}" ]; then \
+        echo "Baking RapidOCR ${RAPIDOCR_BAKE_LANG} (onnxruntime, PP-OCRv5) models..." && \
+        python -c "from rapidocr import RapidOCR; RapidOCR(params={'Det.engine_type': 'onnxruntime', 'Cls.engine_type': 'onnxruntime', 'Rec.engine_type': 'onnxruntime', 'Rec.lang_type': '${RAPIDOCR_BAKE_LANG}', 'Rec.ocr_version': 'PP-OCRv5'})"; \
+    fi
+
+# Optionally register custom OCR presets in the image (e.g. the rapidocr_ru_en preset for
+# the `*-ru_en` flavor). Empty by default, which matches the standard behavior.
+ARG DOCLING_SERVE_CUSTOM_OCR_PRESETS=""
+ENV DOCLING_SERVE_CUSTOM_OCR_PRESETS=${DOCLING_SERVE_CUSTOM_OCR_PRESETS}
+
 ENV LD_PRELOAD=/usr/local/lib/libmimalloc.so
 EXPOSE 5001
 

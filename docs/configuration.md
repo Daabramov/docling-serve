@@ -151,9 +151,9 @@ configure a custom RapidOCR preset that uses the East-Slavic recognition model
 (`eslav`, PP-OCRv5). Its dictionary covers the full Cyrillic alphabet *and* Latin
 letters + digits, so a single model reads mixed RU/EN text; no second engine is needed.
 
-The `paddle` backend requires the `paddlepaddle` package — install with
-`pip install 'docling-serve[rapidocr-paddle]'` (use `backend: onnxruntime` to avoid
-the extra dependency). Pre-download the models for offline/runtime use with
+The `onnxruntime` backend ships with the `rapidocr` extra (no extra dependency). The
+prebuilt `*-ru_en` container image bakes these models in; otherwise pre-download them
+for offline/runtime use with
 [`scripts/download_rapidocr_ru_en.py`](../scripts/download_rapidocr_ru_en.py).
 
 Define an admin preset (recognized by the allow-list automatically):
@@ -162,7 +162,7 @@ Define an admin preset (recognized by the allow-list automatically):
 export DOCLING_SERVE_CUSTOM_OCR_PRESETS='{
   "rapidocr_ru_en": {
     "kind": "rapidocr",
-    "backend": "paddle",
+    "backend": "onnxruntime",
     "rapidocr_params": {"Rec.lang_type": "eslav", "Rec.ocr_version": "PP-OCRv5"}
   }
 }'
@@ -181,7 +181,7 @@ export DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG=true
 {"options": {
   "ocr_custom_config": {
     "kind": "rapidocr",
-    "backend": "paddle",
+    "backend": "onnxruntime",
     "rapidocr_params": {"Rec.lang_type": "eslav", "Rec.ocr_version": "PP-OCRv5"}
   }
 }}
@@ -190,9 +190,10 @@ export DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG=true
 > `ocr_preset` and `ocr_custom_config` are mutually exclusive — omit `ocr_preset`
 > when sending `ocr_custom_config`.
 >
-> `cyrillic` (also Cyrillic + Latin) is a valid alternative to `eslav`. Explicit model
-> paths (`rec_model_path`, `det_model_path`, `cls_model_path`, `rec_keys_path`) are also
-> supported instead of `rapidocr_params` when serving pre-downloaded models.
+> `cyrillic` (also Cyrillic + Latin) is a valid alternative to `eslav`. The `paddle`
+> backend (requires the `paddlepaddle` package) is also supported, as are explicit model
+> paths (`rec_model_path`, `det_model_path`, `cls_model_path`, `rec_keys_path`) instead of
+> `rapidocr_params` when serving pre-downloaded models.
 
 **Configuration Examples:**
 
