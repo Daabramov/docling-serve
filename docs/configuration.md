@@ -132,6 +132,69 @@ The following options control the behavior of the Docling converter, including p
 | `DOCLING_SERVE_ALLOWED_LAYOUT_PRESETS` | `null` (all allowed) | List of allowed layout preset IDs. Accepts JSON array or comma-separated string. |
 | `DOCLING_SERVE_CUSTOM_LAYOUT_PRESETS` | `{}` | Custom layout presets. Must be a JSON object mapping preset IDs to layout options with 'kind' field. |
 
+#### OCR Control
+
+| ENV | Default | Description |
+| ----|---------|-------------|
+| `DOCLING_SERVE_DEFAULT_OCR_PRESET` | `auto` | Default OCR preset to use when user specifies "default". |
+| `DOCLING_SERVE_DEFAULT_OCR_KIND` | `auto` | Default OCR engine kind used when user doesn't provide custom config. |
+| `DOCLING_SERVE_ALLOWED_OCR_PRESETS` | `null` (all allowed) | List of allowed OCR preset IDs. Accepts JSON array or comma-separated string. Custom preset IDs from `DOCLING_SERVE_CUSTOM_OCR_PRESETS` are recognized as valid presets. |
+| `DOCLING_SERVE_ALLOWED_OCR_KINDS` | `null` (all allowed) | List of allowed OCR engine kinds. Accepts JSON array or comma-separated string. |
+| `DOCLING_SERVE_CUSTOM_OCR_PRESETS` | `{}` | Custom OCR presets defined by admin. Must be a JSON object mapping preset IDs to OCR options with a `kind` field. |
+| `DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG` | `false` | Whether users can specify fully custom OCR engine configurations (`ocr_custom_config`). When `false`, only presets are accepted. |
+
+##### Russian + English (Cyrillic) OCR
+
+Docling's default RapidOCR setup only ships English/Chinese recognition models. To
+recognize **Russian and English text — including both mixed on a single image** —
+configure a custom RapidOCR preset that uses the East-Slavic recognition model
+(`eslav`, PP-OCRv5). Its dictionary covers the full Cyrillic alphabet *and* Latin
+letters + digits, so a single model reads mixed RU/EN text; no second engine is needed.
+
+The `onnxruntime` backend ships with the `rapidocr` extra (no extra dependency). The
+prebuilt `*-ru_en` container image bakes these models in; otherwise pre-download them
+for offline/runtime use with
+[`scripts/download_rapidocr_ru_en.py`](../scripts/download_rapidocr_ru_en.py).
+
+Define an admin preset (recognized by the allow-list automatically):
+
+```bash
+export DOCLING_SERVE_CUSTOM_OCR_PRESETS='{
+  "rapidocr_ru_en": {
+    "kind": "rapidocr",
+    "backend": "onnxruntime",
+    "rapidocr_params": {"Rec.lang_type": "eslav", "Rec.ocr_version": "PP-OCRv5"}
+  }
+}'
+```
+
+Then request it per conversion with `"ocr_preset": "rapidocr_ru_en"`.
+
+Alternatively, allow fully custom per-request OCR config and send `ocr_custom_config`
+directly:
+
+```bash
+export DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG=true
+```
+
+```json
+{"options": {
+  "ocr_custom_config": {
+    "kind": "rapidocr",
+    "backend": "onnxruntime",
+    "rapidocr_params": {"Rec.lang_type": "eslav", "Rec.ocr_version": "PP-OCRv5"}
+  }
+}}
+```
+
+> `ocr_preset` and `ocr_custom_config` are mutually exclusive — omit `ocr_preset`
+> when sending `ocr_custom_config`.
+>
+> `cyrillic` (also Cyrillic + Latin) is a valid alternative to `eslav`. The `paddle`
+> backend (requires the `paddlepaddle` package) is also supported, as are explicit model
+> paths (`rec_model_path`, `det_model_path`, `cls_model_path`, `rec_keys_path`) instead of
+> `rapidocr_params` when serving pre-downloaded models.
+
 **Configuration Examples:**
 
 Using JSON arrays in environment variables:

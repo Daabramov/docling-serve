@@ -45,6 +45,56 @@ def test_validate_convert_options_rejects_timeout_above_policy():
         validate_convert_options(ConvertDocumentsOptions(document_timeout=11), policy)
 
 
+def test_custom_ocr_preset_name_is_allowed():
+    policy = build_service_policy(
+        DoclingServeSettings(
+            custom_ocr_presets={
+                "rapidocr_ru_en": {"kind": "rapidocr", "backend": "paddle"}
+            }
+        )
+    )
+
+    assert "rapidocr_ru_en" in policy.allowed_ocr_presets
+    # Should not raise for the admin-defined custom preset.
+    validate_convert_options(
+        ConvertDocumentsOptions(ocr_preset="rapidocr_ru_en"), policy
+    )
+
+
+def test_validate_convert_options_rejects_unknown_ocr_preset():
+    policy = build_service_policy(DoclingServeSettings())
+
+    with pytest.raises(HTTPException, match="ocr_preset 'does_not_exist'"):
+        validate_convert_options(
+            ConvertDocumentsOptions(ocr_preset="does_not_exist"), policy
+        )
+
+
+def test_custom_ocr_config_rejected_when_disabled():
+    policy = build_service_policy(DoclingServeSettings(allow_custom_ocr_config=False))
+
+    with pytest.raises(HTTPException, match="Custom OCR configuration is disabled"):
+        validate_convert_options(
+            ConvertDocumentsOptions(
+                ocr_custom_config={"kind": "rapidocr", "backend": "paddle"},
+            ),
+            policy,
+        )
+
+
+def test_custom_ocr_config_allowed_when_enabled():
+    policy = build_service_policy(DoclingServeSettings(allow_custom_ocr_config=True))
+
+    assert policy.custom_ocr_enabled is True
+    # Should not raise when the server policy allows custom OCR config.
+    validate_convert_options(
+        ConvertDocumentsOptions(
+            ocr_custom_config={"kind": "rapidocr", "backend": "paddle"},
+        ),
+        policy,
+    )
+
+
 def test_validate_convert_request_rejects_s3_without_kfp():
     policy = build_service_policy(DoclingServeSettings(eng_kind=AsyncEngine.LOCAL))
     request = ConvertDocumentsRequest(
