@@ -24,6 +24,7 @@ class ServicePolicy:
     s3_enabled: bool
     callbacks_enabled: bool
     custom_vlm_enabled: bool
+    custom_ocr_enabled: bool
 
 
 def build_service_policy(settings: DoclingServeSettings) -> ServicePolicy:
@@ -31,6 +32,9 @@ def build_service_policy(settings: DoclingServeSettings) -> ServicePolicy:
         allow_external_plugins=settings.allow_external_plugins
     )
     registered_ocr_presets = {str(kind) for kind in ocr_factory.registered_kind}
+    # Admin-defined custom presets are valid preset identifiers too, even though
+    # they are not registered engine kinds in the OCR factory.
+    registered_ocr_presets |= set(settings.custom_ocr_presets.keys())
     if settings.allowed_ocr_presets is None:
         allowed_ocr_presets = registered_ocr_presets
     else:
@@ -43,6 +47,7 @@ def build_service_policy(settings: DoclingServeSettings) -> ServicePolicy:
         s3_enabled=settings.eng_kind == AsyncEngine.KFP,
         callbacks_enabled=True,
         custom_vlm_enabled=settings.allow_custom_vlm_config,
+        custom_ocr_enabled=settings.allow_custom_ocr_config,
     )
 
 
@@ -96,6 +101,12 @@ def validate_convert_options(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Custom VLM configuration is disabled by server policy.",
+        )
+
+    if options.ocr_custom_config and not policy.custom_ocr_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Custom OCR configuration is disabled by server policy.",
         )
 
 
