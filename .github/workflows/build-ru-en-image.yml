@@ -16,11 +16,8 @@ on:
         type: string
         default: linux/amd64
       bake_lang:
-        description: "RapidOCR recognition language to bake in."
-        type: choice
-        options:
-          - eslav
-          - cyrillic
+        description: "RapidOCR PP-OCRv5 recognition model to bake in (eslav covers Cyrillic + Latin)."
+        type: string
         default: eslav
 
 env:
@@ -52,10 +49,15 @@ jobs:
           owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           version="$(grep -m1 '^version' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
           image="${GHCR_REGISTRY}/${owner}/docling-serve"
+          lang="${{ inputs.bake_lang }}"
+          # Must match DOCLING_SERVE_ARTIFACTS_PATH and the bake step in the Containerfile.
+          art="/opt/app-root/src/.cache/docling/models/RapidOcr"
+          rec="${art}/onnx/PP-OCRv5/rec/${lang}_PP-OCRv5_rec_mobile.onnx"
+          keys="${art}/paddle/PP-OCRv5/rec/${lang}_PP-OCRv5_rec_mobile/ppocrv5_${lang}_dict.txt"
           {
             echo "image=${image}"
             echo "tag=${image}:${version}-ru_en"
-            echo "preset={\"rapidocr_ru_en\":{\"kind\":\"rapidocr\",\"backend\":\"onnxruntime\",\"rapidocr_params\":{\"Rec.lang_type\":\"${{ inputs.bake_lang }}\",\"Rec.ocr_version\":\"PP-OCRv5\"}}}"
+            echo "preset={\"rapidocr_ru_en\":{\"kind\":\"rapidocr\",\"backend\":\"onnxruntime\",\"lang\":[\"english\"],\"rec_model_path\":\"${rec}\",\"rec_keys_path\":\"${keys}\"}}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
