@@ -151,27 +151,42 @@ configure a custom RapidOCR preset that uses the East-Slavic recognition model
 (`eslav`, PP-OCRv5). Its dictionary covers the full Cyrillic alphabet *and* Latin
 letters + digits, so a single model reads mixed RU/EN text; no second engine is needed.
 
-The `onnxruntime` backend ships with the `rapidocr` extra (no extra dependency). The
-prebuilt `*-ru_en` container image bakes these models in; otherwise pre-download them
-for offline/runtime use with
-[`scripts/download_rapidocr_ru_en.py`](../scripts/download_rapidocr_ru_en.py).
+The East-Slavic model is wired in via explicit **`rec_model_path` / `rec_keys_path`**
+pointing at the ONNX recognition model and its character dictionary. (The recognition
+language cannot be selected through `rapidocr_params` such as `Rec.lang_type` — docling
+forwards those values straight to RapidOCR, which requires Enum types there and rejects
+plain JSON strings. Explicit model paths are the reliable, JSON-friendly approach.) The
+detection/classification models are script-agnostic and come from the standard RapidOCR
+download.
 
-Define an admin preset (recognized by the allow-list automatically):
+The prebuilt `*-ru_en` container image bakes these models in and pre-registers the
+`rapidocr_ru_en` preset out of the box. For other deployments, download the model +
+dictionary with
+[`scripts/download_rapidocr_ru_en.py`](../scripts/download_rapidocr_ru_en.py) (it prints
+the exact `DOCLING_SERVE_CUSTOM_OCR_PRESETS` value for the paths it wrote):
+
+```bash
+python scripts/download_rapidocr_ru_en.py   # writes ./rapidocr_ru_en_models/*
+```
+
+The resulting admin preset (recognized by the allow-list automatically) looks like:
 
 ```bash
 export DOCLING_SERVE_CUSTOM_OCR_PRESETS='{
   "rapidocr_ru_en": {
     "kind": "rapidocr",
     "backend": "onnxruntime",
-    "rapidocr_params": {"Rec.lang_type": "eslav", "Rec.ocr_version": "PP-OCRv5"}
+    "lang": ["english"],
+    "rec_model_path": "/abs/path/eslav_PP-OCRv5_rec_mobile.onnx",
+    "rec_keys_path": "/abs/path/ppocrv5_eslav_dict.txt"
   }
 }'
 ```
 
 Then request it per conversion with `"ocr_preset": "rapidocr_ru_en"`.
 
-Alternatively, allow fully custom per-request OCR config and send `ocr_custom_config`
-directly:
+Alternatively, allow fully custom per-request OCR config and send the same options as
+`ocr_custom_config` directly:
 
 ```bash
 export DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG=true
@@ -182,7 +197,9 @@ export DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG=true
   "ocr_custom_config": {
     "kind": "rapidocr",
     "backend": "onnxruntime",
-    "rapidocr_params": {"Rec.lang_type": "eslav", "Rec.ocr_version": "PP-OCRv5"}
+    "lang": ["english"],
+    "rec_model_path": "/abs/path/eslav_PP-OCRv5_rec_mobile.onnx",
+    "rec_keys_path": "/abs/path/ppocrv5_eslav_dict.txt"
   }
 }}
 ```
@@ -190,10 +207,8 @@ export DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG=true
 > `ocr_preset` and `ocr_custom_config` are mutually exclusive — omit `ocr_preset`
 > when sending `ocr_custom_config`.
 >
-> `cyrillic` (also Cyrillic + Latin) is a valid alternative to `eslav`. The `paddle`
-> backend (requires the `paddlepaddle` package) is also supported, as are explicit model
-> paths (`rec_model_path`, `det_model_path`, `cls_model_path`, `rec_keys_path`) instead of
-> `rapidocr_params` when serving pre-downloaded models.
+> The `paddle` backend (requires the `paddlepaddle` package) is also supported; in the
+> `*-ru_en` image the `onnxruntime` backend is used since it needs no extra dependency.
 
 **Configuration Examples:**
 

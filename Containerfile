@@ -103,13 +103,26 @@ RUN --mount=from=uv_stage,source=/uv,target=/bin/uv \
 
 # Optionally bake RapidOCR Cyrillic (Russian+English) recognition models into the
 # image so the `*-ru_en` flavor works offline. No-op unless RAPIDOCR_BAKE_LANG is set
-# (e.g. "eslav" for East-Slavic PP-OCRv5, or "cyrillic"). Uses the onnxruntime backend,
-# which ships with the rapidocr extra. Models are cached inside the rapidocr package dir
-# and reused at runtime. Runs after the final `uv sync` so they are not wiped.
+# (e.g. "eslav" for the East-Slavic PP-OCRv5 recognition model, which covers Cyrillic +
+# Latin). The default detection/classification models are already fetched by the
+# `rapidocr` entry in MODELS_LIST above; here we only add the language-specific ONNX
+# recognition model and its character dictionary into the same artifacts tree. The
+# rapidocr_ru_en preset then points `rec_model_path`/`rec_keys_path` at these files.
 ARG RAPIDOCR_BAKE_LANG=""
 RUN if [ -n "${RAPIDOCR_BAKE_LANG}" ]; then \
-        echo "Baking RapidOCR ${RAPIDOCR_BAKE_LANG} (onnxruntime, PP-OCRv5) models..." && \
-        python -c "from rapidocr import RapidOCR; RapidOCR(params={'Det.engine_type': 'onnxruntime', 'Cls.engine_type': 'onnxruntime', 'Rec.engine_type': 'onnxruntime', 'Rec.lang_type': '${RAPIDOCR_BAKE_LANG}', 'Rec.ocr_version': 'PP-OCRv5'})"; \
+        echo "Baking RapidOCR ${RAPIDOCR_BAKE_LANG} (onnxruntime, PP-OCRv5) recognition model..." && \
+        base="https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.8.0" && \
+        recdir="${DOCLING_SERVE_ARTIFACTS_PATH}/RapidOcr/onnx/PP-OCRv5/rec" && \
+        dictdir="${DOCLING_SERVE_ARTIFACTS_PATH}/RapidOcr/paddle/PP-OCRv5/rec/${RAPIDOCR_BAKE_LANG}_PP-OCRv5_rec_mobile" && \
+        mkdir -p "${recdir}" "${dictdir}" && \
+        python -c "import urllib.request as u,sys; req=u.Request(sys.argv[1], headers={'User-Agent':'Mozilla/5.0'}); open(sys.argv[2],'wb').write(u.urlopen(req, timeout=180).read())" \
+            "${base}/onnx/PP-OCRv5/rec/${RAPIDOCR_BAKE_LANG}_PP-OCRv5_rec_mobile.onnx" \
+            "${recdir}/${RAPIDOCR_BAKE_LANG}_PP-OCRv5_rec_mobile.onnx" && \
+        python -c "import urllib.request as u,sys; req=u.Request(sys.argv[1], headers={'User-Agent':'Mozilla/5.0'}); open(sys.argv[2],'wb').write(u.urlopen(req, timeout=180).read())" \
+            "${base}/paddle/PP-OCRv5/rec/${RAPIDOCR_BAKE_LANG}_PP-OCRv5_rec_mobile/ppocrv5_${RAPIDOCR_BAKE_LANG}_dict.txt" \
+            "${dictdir}/ppocrv5_${RAPIDOCR_BAKE_LANG}_dict.txt" && \
+        chmod -R g=u "${DOCLING_SERVE_ARTIFACTS_PATH}/RapidOcr" && \
+        ls -l "${recdir}/${RAPIDOCR_BAKE_LANG}_PP-OCRv5_rec_mobile.onnx" "${dictdir}/ppocrv5_${RAPIDOCR_BAKE_LANG}_dict.txt"; \
     fi
 
 # Optionally register custom OCR presets in the image (e.g. the rapidocr_ru_en preset for
