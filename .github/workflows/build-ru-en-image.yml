@@ -76,7 +76,7 @@ jobs:
             echo "image=${image}"
             echo "tag=${image}:${version}-ru_en"
             echo "uv_args=${uv_args}"
-            echo "preset={\"rapidocr_ru_en\":{\"kind\":\"rapidocr\",\"backend\":\"onnxruntime\",\"lang\":[\"english\"],\"rec_model_path\":\"${rec}\",\"rec_keys_path\":\"${keys}\"}}"
+            echo "preset={\"rapidocr_ru_en\":{\"kind\":\"rapidocr\",\"backend\":\"onnxruntime\",\"rec_model_path\":\"${rec}\",\"rec_keys_path\":\"${keys}\"}}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
