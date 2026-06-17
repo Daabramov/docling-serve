@@ -101,6 +101,11 @@ RUN --mount=from=uv_stage,source=/uv,target=/bin/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     umask 002 && uv sync --frozen --no-dev --all-extras ${UV_SYNC_EXTRA_ARGS}
 
+# Fail the build loudly if the Gradio UI dependency did not make it into the image.
+# enable_ui relies on `import gradio`; a silent miss only surfaces at runtime as the
+# misleading "gradio is not installed" warning, so assert it here at build time.
+RUN "${UV_PROJECT_ENVIRONMENT}/bin/python" -c "import gradio; print('gradio', gradio.__version__)"
+
 # Optionally bake RapidOCR Cyrillic (Russian+English) recognition models into the
 # image so the `*-ru_en` flavor works offline. No-op unless RAPIDOCR_BAKE_LANG is set
 # (e.g. "eslav" for the East-Slavic PP-OCRv5 recognition model, which covers Cyrillic +
