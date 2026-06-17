@@ -9,6 +9,32 @@ from docling_serve.storage import get_scratch
 _log = logging.getLogger(__name__)
 
 
+def _build_s3_presigned_config():
+    """Build presigned artifact storage config, or return None when disabled.
+
+    The managed storage prefix and URL TTL are owned by docling-serve settings and
+    injected into jobkit here before any orchestrator is constructed.
+    """
+    if not docling_serve_settings.artifact_storage_enabled:
+        return None
+
+    from docling.datamodel.service.sources import S3Coordinates
+    from docling_jobkit.config.target_config import S3PresignedConfig
+
+    coords = S3Coordinates(
+        endpoint=docling_serve_settings.artifact_storage_endpoint,
+        verify_ssl=docling_serve_settings.artifact_storage_verify_ssl,
+        access_key=docling_serve_settings.artifact_storage_access_key,
+        secret_key=docling_serve_settings.artifact_storage_secret_key,
+        bucket=docling_serve_settings.artifact_storage_bucket,
+        key_prefix=docling_serve_settings.artifact_storage_key_prefix,
+    )
+    return S3PresignedConfig(
+        s3_coords=coords,
+        url_expiration=docling_serve_settings.artifact_storage_presign_ttl_seconds,
+    )
+
+
 @lru_cache
 def get_async_orchestrator() -> BaseOrchestrator:
     if docling_serve_settings.eng_kind == AsyncEngine.LOCAL:
@@ -26,6 +52,7 @@ def get_async_orchestrator() -> BaseOrchestrator:
             shared_models=docling_serve_settings.eng_loc_share_models,
             scratch_dir=get_scratch(),
             result_removal_delay=docling_serve_settings.result_removal_delay,
+            s3_presigned_config=_build_s3_presigned_config(),
         )
 
         cm_config = DoclingConverterManagerConfig(
@@ -99,6 +126,7 @@ def get_async_orchestrator() -> BaseOrchestrator:
 
         rq_config = RQOrchestratorConfig(
             redis_url=docling_serve_settings.eng_rq_redis_url,
+            queue_name=docling_serve_settings.eng_rq_queue_name,
             results_prefix=docling_serve_settings.eng_rq_results_prefix,
             sub_channel=docling_serve_settings.eng_rq_sub_channel,
             scratch_dir=get_scratch(),
@@ -115,6 +143,7 @@ def get_async_orchestrator() -> BaseOrchestrator:
             zombie_reaper_interval=docling_serve_settings.eng_rq_zombie_reaper_interval,
             zombie_reaper_max_age=docling_serve_settings.eng_rq_zombie_reaper_max_age,
             result_removal_delay=docling_serve_settings.result_removal_delay,
+            s3_presigned_config=_build_s3_presigned_config(),
         )
 
         orchestrator = RQOrchestrator(config=rq_config)
@@ -223,6 +252,7 @@ def get_async_orchestrator() -> BaseOrchestrator:
 
         # Create Fair Ray orchestrator config
         ray_config = RayOrchestratorConfig(
+            s3_presigned_config=_build_s3_presigned_config(),
             # Redis Configuration
             redis_url=docling_serve_settings.eng_ray_redis_url,
             redis_max_connections=docling_serve_settings.eng_ray_redis_max_connections,
@@ -263,6 +293,7 @@ def get_async_orchestrator() -> BaseOrchestrator:
             max_actors=docling_serve_settings.eng_ray_max_actors,
             target_requests_per_replica=docling_serve_settings.eng_ray_target_requests_per_replica,
             max_ongoing_requests_per_replica=docling_serve_settings.eng_ray_max_ongoing_requests_per_replica,
+            converter_max_replicas_per_node=docling_serve_settings.eng_ray_converter_max_replicas_per_node,
             upscale_delay_s=docling_serve_settings.eng_ray_upscale_delay_s,
             downscale_delay_s=docling_serve_settings.eng_ray_downscale_delay_s,
             graceful_shutdown_wait_loop_s=docling_serve_settings.eng_ray_graceful_shutdown_wait_loop_s,
@@ -275,6 +306,7 @@ def get_async_orchestrator() -> BaseOrchestrator:
             coordinator_max_actors=docling_serve_settings.eng_ray_coordinator_max_actors,
             coordinator_target_requests_per_replica=docling_serve_settings.eng_ray_coordinator_target_requests_per_replica,
             coordinator_max_ongoing_requests_per_replica=docling_serve_settings.eng_ray_coordinator_max_ongoing_requests_per_replica,
+            coordinator_max_replicas_per_node=docling_serve_settings.eng_ray_coordinator_max_replicas_per_node,
             coordinator_actor_num_cpus=docling_serve_settings.eng_ray_coordinator_actor_num_cpus,
             coordinator_actor_memory_request=docling_serve_settings.eng_ray_coordinator_actor_memory_request,
             # Fault Tolerance & Retry

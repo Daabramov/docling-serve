@@ -19,6 +19,15 @@ on:
         description: "RapidOCR PP-OCRv5 recognition model to bake in (eslav covers Cyrillic + Latin)."
         type: string
         default: eslav
+      torch_variant:
+        description: "PyTorch build to use (matches the official docling-serve image variants)."
+        type: choice
+        options:
+          - cu128
+          - cu130
+          - pypi
+          - cpu
+        default: cu128
 
 env:
   GHCR_REGISTRY: ghcr.io
@@ -54,10 +63,20 @@ jobs:
           art="/opt/app-root/src/.cache/docling/models/RapidOcr"
           rec="${art}/onnx/PP-OCRv5/rec/${lang}_PP-OCRv5_rec_mobile.onnx"
           keys="${art}/paddle/PP-OCRv5/rec/${lang}_PP-OCRv5_rec_mobile/ppocrv5_${lang}_dict.txt"
+          # Select the PyTorch build, mirroring .github/image-matrix.json. The default
+          # `pypi` group is CUDA 12.6 torch from PyPI (same as the standard docling-serve
+          # image); cu128/cu130 pin CUDA 12.8/13.0 from download.pytorch.org.
+          case "${{ inputs.torch_variant }}" in
+            cu128) uv_args="--no-group pypi --group cu128" ;;
+            cu130) uv_args="--no-group pypi --group cu130" ;;
+            cpu)   uv_args="--no-group pypi --group cpu --no-extra flash-attn" ;;
+            *)     uv_args="--no-extra flash-attn" ;;
+          esac
           {
             echo "image=${image}"
             echo "tag=${image}:${version}-ru_en"
-            echo "preset={\"rapidocr_ru_en\":{\"kind\":\"rapidocr\",\"backend\":\"onnxruntime\",\"lang\":[\"english\"],\"rec_model_path\":\"${rec}\",\"rec_keys_path\":\"${keys}\"}}"
+            echo "uv_args=${uv_args}"
+            echo "preset={\"rapidocr_ru_en\":{\"kind\":\"rapidocr\",\"backend\":\"onnxruntime\",\"rec_model_path\":\"${rec}\",\"rec_keys_path\":\"${keys}\"}}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -82,8 +101,10 @@ jobs:
           build-args: |
             RAPIDOCR_BAKE_LANG=${{ inputs.bake_lang }}
             DOCLING_SERVE_CUSTOM_OCR_PRESETS=${{ steps.vars.outputs.preset }}
+            UV_SYNC_EXTRA_ARGS=${{ steps.vars.outputs.uv_args }}
 
       - name: Summary
         run: |
           echo "Pushed image: ${{ steps.vars.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "PyTorch variant: ${{ inputs.torch_variant }} (UV_SYNC_EXTRA_ARGS='${{ steps.vars.outputs.uv_args }}')" >> "$GITHUB_STEP_SUMMARY"
           echo "Use it with \`\"ocr_preset\": \"rapidocr_ru_en\"\` in convert requests." >> "$GITHUB_STEP_SUMMARY"
