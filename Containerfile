@@ -87,9 +87,14 @@ RUN --mount=from=uv_stage,source=/uv,target=/bin/uv \
 ARG MODELS_LIST="layout tableformer picture_classifier rapidocr easyocr"
 
 RUN echo "Downloading models..." && \
-    HF_HUB_DOWNLOAD_TIMEOUT="90" \
-    HF_HUB_ETAG_TIMEOUT="90" \
-    docling-tools models download -o "${DOCLING_SERVE_ARTIFACTS_PATH}" ${MODELS_LIST} && \
+    export HF_HUB_DOWNLOAD_TIMEOUT="90" HF_HUB_ETAG_TIMEOUT="90" && \
+    n=0; \
+    until docling-tools models download -o "${DOCLING_SERVE_ARTIFACTS_PATH}" ${MODELS_LIST}; do \
+        n=$((n+1)); \
+        if [ "$n" -ge 5 ]; then echo "model download failed after $n attempts" >&2; exit 1; fi; \
+        echo "HuggingFace download failed (attempt $n), retrying in $((n*30))s (HF 429/network are transient)..."; \
+        sleep $((n*30)); \
+    done && \
     chown -R 1001:0 ${DOCLING_SERVE_ARTIFACTS_PATH} && \
     chmod -R g=u ${DOCLING_SERVE_ARTIFACTS_PATH}
 
