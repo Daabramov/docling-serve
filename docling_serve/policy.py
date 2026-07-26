@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -9,24 +10,78 @@ from docling.datamodel.service.options import ConvertDocumentsOptions
 from docling.datamodel.service.requests import (
     BaseChunkDocumentsRequest,
     BatchConvertSourcesRequest,
+    BatchSourceRequestItem,
     ConvertSourcesRequest,
-    S3SourceRequest,
+    SourceRequestItem,
     TargetRequest,
 )
 from docling.datamodel.service.targets import (
     InBodyTarget,
     PresignedUrlTarget,
-    S3Target,
 )
 from docling.models.factories import get_ocr_factory
 from docling_core.types.doc import ImageRefMode
 
-from docling_serve.settings import AsyncEngine, DoclingServeSettings
+from docling_serve.settings import DoclingServeSettings
 
-ALL_TARGET_TYPES = frozenset({"inbody", "zip", "s3", "put", "presigned_url"})
+ALL_TARGET_TYPES = frozenset(
+    {
+        "inbody",
+        "zip",
+        "s3",
+        "azure_blob",
+        "google_cloud_storage",
+        "google_drive",
+        "put",
+        "presigned_url",
+    }
+)
+
+
+def _source_kinds(annotated: Any) -> frozenset[str]:
+    """Discriminator ``kind`` literals of an ``Annotated[Union[...], ...]`` alias."""
+    union = typing.get_args(annotated)[0]  # strip Annotated -> Union
+    return frozenset(m.model_fields["kind"].default for m in typing.get_args(union))
+
+
+# Derived from the endpoint source unions so it can never drift past what the
+# request models actually accept; allowed_source_types only ever narrows this.
+ALL_SOURCE_TYPES = _source_kinds(SourceRequestItem) | _source_kinds(
+    BatchSourceRequestItem
+)
 _ConvertRequestT = TypeVar(
     "_ConvertRequestT", ConvertSourcesRequest, BatchConvertSourcesRequest
 )
+
+# Source kinds that can expand into many documents (bucket/drive traversal). Such
+# a source must write results to a storage target rather than an in-response
+# manifest that would have to list every produced artifact.
+EXPANDABLE_SOURCE_KINDS = frozenset(
+    {"s3", "azure_blob", "google_cloud_storage", "google_drive"}
+)
+# Targets that stream documents out to storage without an in-response manifest.
+STORAGE_TARGET_KINDS = frozenset(
+    {"s3", "azure_blob", "google_cloud_storage", "google_drive"}
+)
+
+
+def validate_source_target_pairing(sources: list[Any], target: Any) -> None:
+    """Reject expandable sources paired with a non-storage target.
+
+    Bucket/drive sources can fan out into many documents, so their results must
+    go to a storage target that writes each document out directly. Non-expandable
+    sources (file/http) may use any target, including storage targets.
+    """
+    expandable = sorted({s.kind for s in sources if s.kind in EXPANDABLE_SOURCE_KINDS})
+    if expandable and target.kind not in STORAGE_TARGET_KINDS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"sources of kind {expandable} can expand into multiple documents "
+                f"and require a storage target (one of {sorted(STORAGE_TARGET_KINDS)}); "
+                f"got target kind '{target.kind}'."
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,8 +90,8 @@ class ServicePolicy:
     max_images_scale: float
     allow_external_plugins: bool
     allowed_ocr_presets: frozenset[str]
+    allowed_source_types: frozenset[str]
     allowed_target_types: frozenset[str]
-    s3_enabled: bool
     callbacks_enabled: bool
     custom_vlm_enabled: bool
     custom_ocr_enabled: bool
@@ -57,6 +112,12 @@ def build_service_policy(settings: DoclingServeSettings) -> ServicePolicy:
         allowed_ocr_presets = registered_ocr_presets
     else:
         allowed_ocr_presets = set(settings.allowed_ocr_presets) & registered_ocr_presets
+    if settings.allowed_source_types is None:
+        allowed_source_types = ALL_SOURCE_TYPES
+    else:
+        allowed_source_types = (
+            frozenset(settings.allowed_source_types) & ALL_SOURCE_TYPES
+        )
     if settings.allowed_target_types is None:
         allowed_target_types = ALL_TARGET_TYPES
     else:
@@ -80,8 +141,8 @@ def build_service_policy(settings: DoclingServeSettings) -> ServicePolicy:
         max_images_scale=settings.max_images_scale,
         allow_external_plugins=settings.allow_external_plugins,
         allowed_ocr_presets=frozenset(allowed_ocr_presets),
+        allowed_source_types=allowed_source_types,
         allowed_target_types=allowed_target_types,
-        s3_enabled=settings.eng_kind == AsyncEngine.KFP,
         callbacks_enabled=True,
         custom_vlm_enabled=settings.allow_custom_vlm_config,
         custom_ocr_enabled=settings.allow_custom_ocr_config,
@@ -216,10 +277,23 @@ def validate_target_kind(target_kind: str, policy: ServicePolicy) -> None:
     )
 
 
+def validate_source_kinds(sources: Any, policy: ServicePolicy) -> None:
+    for source in sources:
+        if source.kind not in policy.allowed_source_types:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"source kind '{source.kind}' is not allowed. "
+                    f"Allowed values: {sorted(policy.allowed_source_types)}."
+                ),
+            )
+
+
 def validate_convert_request(
     request: ConvertSourcesRequest, policy: ServicePolicy
 ) -> None:
     validate_convert_options(request.options, policy)
+    validate_source_kinds(request.sources, policy)
     validate_target_kind(request.target.kind, policy)
 
     if request.callbacks and not policy.callbacks_enabled:
@@ -247,34 +321,14 @@ def validate_convert_request(
                 ),
             )
 
-    has_s3_source = any(
-        isinstance(source, S3SourceRequest) for source in request.sources
-    )
-    has_s3_target = isinstance(request.target, S3Target)
-
-    if has_s3_source:
-        if not policy.s3_enabled:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail='source kind "s3" requires engine kind "KFP".',
-            )
-        if not has_s3_target:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail='source kind "s3" requires target kind "s3".',
-            )
-
-    if has_s3_target and not has_s3_source:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail='target kind "s3" requires source kind "s3".',
-        )
+    validate_source_target_pairing(request.sources, request.target)
 
 
 def validate_batch_convert_request(
     request: BatchConvertSourcesRequest, policy: ServicePolicy
 ) -> None:
     validate_convert_options(request.options, policy)
+    validate_source_kinds(request.sources, policy)
 
     if request.callbacks and not policy.callbacks_enabled:
         raise HTTPException(
@@ -301,24 +355,14 @@ def validate_batch_convert_request(
                 ),
             )
 
-    has_s3_source = any(
-        isinstance(source, S3SourceRequest) for source in request.sources
-    )
-    has_s3_target = isinstance(request.target, S3Target)
-
-    # Batch endpoint intentionally allows S3 sources on the Ray engine; only the
-    # S3 source -> S3 target pairing is enforced here.
-    if has_s3_source and not has_s3_target:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="S3 sources require an S3 target on the batch endpoint.",
-        )
+    validate_source_target_pairing(request.sources, request.target)
 
 
 def validate_chunk_request(
     request: BaseChunkDocumentsRequest, policy: ServicePolicy
 ) -> None:
     validate_convert_options(request.convert_options, policy)
+    validate_source_kinds(request.sources, policy)
     validate_target_kind(request.target.kind, policy)
 
     if request.callbacks and not policy.callbacks_enabled:
@@ -333,25 +377,4 @@ def validate_chunk_request(
             detail="presigned_url target is not supported for chunk endpoints.",
         )
 
-    has_s3_source = any(
-        isinstance(source, S3SourceRequest) for source in request.sources
-    )
-    has_s3_target = isinstance(request.target, S3Target)
-
-    if has_s3_source:
-        if not policy.s3_enabled:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail='source kind "s3" requires engine kind "KFP".',
-            )
-        if not has_s3_target:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail='source kind "s3" requires target kind "s3".',
-            )
-
-    if has_s3_target and not has_s3_source:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail='target kind "s3" requires source kind "s3".',
-        )
+    validate_source_target_pairing(request.sources, request.target)
