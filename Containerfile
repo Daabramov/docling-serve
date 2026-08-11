@@ -86,10 +86,21 @@ RUN --mount=from=uv_stage,source=/uv,target=/bin/uv \
 
 ARG MODELS_LIST="layout tableformer picture_classifier rapidocr easyocr"
 
+# RapidOCR recognition language to prefetch, e.g. "eslav" for the East-Slavic
+# (Cyrillic + Latin) PP-OCRv5 checkpoints used by the `*-ru_en` flavor. Empty keeps
+# the stock model set. docling resolves the language to its backbone on its own, so
+# the image only has to name the language here and in the OCR preset.
+ARG RAPIDOCR_LANG=""
+
 RUN echo "Downloading models..." && \
     export HF_HUB_DOWNLOAD_TIMEOUT="90" HF_HUB_ETAG_TIMEOUT="90" && \
+    rapidocr_args=""; \
+    if [ -n "${RAPIDOCR_LANG}" ]; then \
+        rapidocr_args="--rapidocr-backend-lang onnxruntime:${RAPIDOCR_LANG}"; \
+        echo "Prefetching RapidOCR checkpoints for lang=${RAPIDOCR_LANG}"; \
+    fi; \
     n=0; \
-    until docling-tools models download -o "${DOCLING_SERVE_ARTIFACTS_PATH}" ${MODELS_LIST}; do \
+    until docling-tools models download -o "${DOCLING_SERVE_ARTIFACTS_PATH}" ${MODELS_LIST} ${rapidocr_args}; do \
         n=$((n+1)); \
         if [ "$n" -ge 5 ]; then echo "model download failed after $n attempts" >&2; exit 1; fi; \
         echo "HuggingFace download failed (attempt $n), retrying in $((n*30))s (HF 429/network are transient)..."; \
@@ -105,35 +116,6 @@ RUN --mount=from=uv_stage,source=/uv,target=/bin/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     umask 002 && uv sync --frozen --no-dev --all-extras ${UV_SYNC_EXTRA_ARGS}
-
-# Fail the build loudly if the Gradio UI dependency did not make it into the image.
-# enable_ui relies on `import gradio`; a silent miss only surfaces at runtime as the
-# misleading "gradio is not installed" warning, so assert it here at build time.
-RUN "${UV_PROJECT_ENVIRONMENT}/bin/python" -c "import gradio; print('gradio', gradio.__version__)"
-
-# Optionally bake RapidOCR Cyrillic (Russian+English) recognition models into the
-# image so the `*-ru_en` flavor works offline. No-op unless RAPIDOCR_BAKE_LANG is set
-# (e.g. "eslav" for the East-Slavic PP-OCRv5 recognition model, which covers Cyrillic +
-# Latin). The default detection/classification models are already fetched by the
-# `rapidocr` entry in MODELS_LIST above; here we only add the language-specific ONNX
-# recognition model and its character dictionary into the same artifacts tree. The
-# rapidocr_ru_en preset then points `rec_model_path`/`rec_keys_path` at these files.
-ARG RAPIDOCR_BAKE_LANG=""
-RUN if [ -n "${RAPIDOCR_BAKE_LANG}" ]; then \
-        echo "Baking RapidOCR ${RAPIDOCR_BAKE_LANG} (onnxruntime, PP-OCRv5) recognition model..." && \
-        base="https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.8.0" && \
-        recdir="${DOCLING_SERVE_ARTIFACTS_PATH}/RapidOcr/onnx/PP-OCRv5/rec" && \
-        dictdir="${DOCLING_SERVE_ARTIFACTS_PATH}/RapidOcr/paddle/PP-OCRv5/rec/${RAPIDOCR_BAKE_LANG}_PP-OCRv5_rec_mobile" && \
-        mkdir -p "${recdir}" "${dictdir}" && \
-        python -c "import urllib.request as u,sys; req=u.Request(sys.argv[1], headers={'User-Agent':'Mozilla/5.0'}); open(sys.argv[2],'wb').write(u.urlopen(req, timeout=180).read())" \
-            "${base}/onnx/PP-OCRv5/rec/${RAPIDOCR_BAKE_LANG}_PP-OCRv5_rec_mobile.onnx" \
-            "${recdir}/${RAPIDOCR_BAKE_LANG}_PP-OCRv5_rec_mobile.onnx" && \
-        python -c "import urllib.request as u,sys; req=u.Request(sys.argv[1], headers={'User-Agent':'Mozilla/5.0'}); open(sys.argv[2],'wb').write(u.urlopen(req, timeout=180).read())" \
-            "${base}/paddle/PP-OCRv5/rec/${RAPIDOCR_BAKE_LANG}_PP-OCRv5_rec_mobile/ppocrv5_${RAPIDOCR_BAKE_LANG}_dict.txt" \
-            "${dictdir}/ppocrv5_${RAPIDOCR_BAKE_LANG}_dict.txt" && \
-        chmod -R g=u "${DOCLING_SERVE_ARTIFACTS_PATH}/RapidOcr" && \
-        ls -l "${recdir}/${RAPIDOCR_BAKE_LANG}_PP-OCRv5_rec_mobile.onnx" "${dictdir}/ppocrv5_${RAPIDOCR_BAKE_LANG}_dict.txt"; \
-    fi
 
 # Optionally register custom OCR presets in the image (e.g. the rapidocr_ru_en preset for
 # the `*-ru_en` flavor). Empty by default, which matches the standard behavior.

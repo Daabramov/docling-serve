@@ -1,12 +1,13 @@
 name: Build RU+EN container image
 
 # Builds the docling-serve image with RapidOCR Russian+English (Cyrillic) OCR
-# baked in and pushes it to GHCR as `<version>-ru_en` (version taken from
-# pyproject.toml, e.g. 1.20.0-ru_en).
+# prefetched and pushes it to GHCR as `<version>-ru_en` (version taken from
+# pyproject.toml, e.g. 1.30.0-ru_en).
 #
-# The image bakes the East-Slavic (eslav, PP-OCRv5, onnxruntime) recognition
-# model and pre-registers a `rapidocr_ru_en` OCR preset, so it works offline.
-# Run it manually from the Actions tab.
+# Both the prefetch and the `rapidocr_ru_en` preset just name the language
+# ("eslav" — East Slavic, covers Cyrillic + Latin); docling resolves it to the
+# PP-OCRv5 checkpoints itself, so the image works offline with no hardcoded
+# model paths. Run it manually from the Actions tab.
 
 on:
   workflow_dispatch:
@@ -15,8 +16,8 @@ on:
         description: "Build platforms (comma separated)."
         type: string
         default: linux/amd64
-      bake_lang:
-        description: "RapidOCR PP-OCRv5 recognition model to bake in (eslav covers Cyrillic + Latin)."
+      ocr_lang:
+        description: "RapidOCR recognition language to prefetch and use (eslav covers Cyrillic + Latin)."
         type: string
         default: eslav
       torch_variant:
@@ -58,11 +59,7 @@ jobs:
           owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
           version="$(grep -m1 '^version' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
           image="${GHCR_REGISTRY}/${owner}/docling-serve"
-          lang="${{ inputs.bake_lang }}"
-          # Must match DOCLING_SERVE_ARTIFACTS_PATH and the bake step in the Containerfile.
-          art="/opt/app-root/src/.cache/docling/models/RapidOcr"
-          rec="${art}/onnx/PP-OCRv5/rec/${lang}_PP-OCRv5_rec_mobile.onnx"
-          keys="${art}/paddle/PP-OCRv5/rec/${lang}_PP-OCRv5_rec_mobile/ppocrv5_${lang}_dict.txt"
+          lang="${{ inputs.ocr_lang }}"
           # Select the PyTorch build, mirroring .github/image-matrix.json. The default
           # `pypi` group is CUDA 12.6 torch from PyPI (same as the standard docling-serve
           # image); cu128/cu130 pin CUDA 12.8/13.0 from download.pytorch.org.
@@ -76,7 +73,7 @@ jobs:
             echo "image=${image}"
             echo "tag=${image}:${version}-ru_en"
             echo "uv_args=${uv_args}"
-            echo "preset={\"rapidocr_ru_en\":{\"kind\":\"rapidocr\",\"backend\":\"onnxruntime\",\"rec_model_path\":\"${rec}\",\"rec_keys_path\":\"${keys}\"}}"
+            echo "preset={\"rapidocr_ru_en\":{\"kind\":\"rapidocr\",\"backend\":\"onnxruntime\",\"lang\":[\"${lang}\"]}}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -99,7 +96,7 @@ jobs:
           pull: true
           tags: ${{ steps.vars.outputs.tag }}
           build-args: |
-            RAPIDOCR_BAKE_LANG=${{ inputs.bake_lang }}
+            RAPIDOCR_LANG=${{ inputs.ocr_lang }}
             DOCLING_SERVE_CUSTOM_OCR_PRESETS=${{ steps.vars.outputs.preset }}
             UV_SYNC_EXTRA_ARGS=${{ steps.vars.outputs.uv_args }}
 

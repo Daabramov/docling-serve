@@ -238,39 +238,42 @@ configure a custom RapidOCR preset that uses the East-Slavic recognition model
 (`eslav`, PP-OCRv5). Its dictionary covers the full Cyrillic alphabet *and* Latin
 letters + digits, so a single model reads mixed RU/EN text; no second engine is needed.
 
-The East-Slavic model is wired in via explicit **`rec_model_path` / `rec_keys_path`**
-pointing at the ONNX recognition model and its character dictionary. (The recognition
-language cannot be selected through `rapidocr_params` such as `Rec.lang_type` — docling
-forwards those values straight to RapidOCR, which requires Enum types there and rejects
-plain JSON strings. Explicit model paths are the reliable, JSON-friendly approach.) The
-detection/classification models are script-agnostic and come from the standard RapidOCR
-download.
+Selecting the model is just a matter of naming the language: docling resolves `eslav`
+to the PP-OCRv5 backbone on its own (it is deliberately absent from PP-OCRv6, whose
+multilingual recognizer covers Latin-script and CJK languages but no Cyrillic), and
+pulls the matching detection/recognition checkpoints. Note that only script/group
+tokens work here — `eslav` or `cyrillic`, **not** `ru`/`russian`, which RapidOCR
+rejects. Prefer `eslav` for Russian: it is trained on East Slavic specifically and
+ships a much richer punctuation set than the broader `cyrillic` model.
 
-The prebuilt `*-ru_en` container image bakes these models in and pre-registers the
-`rapidocr_ru_en` preset out of the box. For other deployments, download the model +
-dictionary with
-[`scripts/download_rapidocr_ru_en.py`](../scripts/download_rapidocr_ru_en.py) (it prints
-the exact `DOCLING_SERVE_CUSTOM_OCR_PRESETS` value for the paths it wrote):
+The prebuilt `*-ru_en` container image prefetches these checkpoints and pre-registers
+the `rapidocr_ru_en` preset out of the box. For other deployments, prefetch them with
+the standard tooling:
 
 ```bash
-python scripts/download_rapidocr_ru_en.py   # writes ./rapidocr_ru_en_models/*
+docling-tools models download rapidocr --rapidocr-backend-lang onnxruntime:eslav
 ```
 
-The resulting admin preset (recognized by the allow-list automatically) looks like:
+The admin preset (recognized by the allow-list automatically) is then simply:
 
 ```bash
 export DOCLING_SERVE_CUSTOM_OCR_PRESETS='{
   "rapidocr_ru_en": {
     "kind": "rapidocr",
     "backend": "onnxruntime",
-    "lang": ["english"],
-    "rec_model_path": "/abs/path/eslav_PP-OCRv5_rec_mobile.onnx",
-    "rec_keys_path": "/abs/path/ppocrv5_eslav_dict.txt"
+    "lang": ["eslav"]
   }
 }'
 ```
 
 Then request it per conversion with `"ocr_preset": "rapidocr_ru_en"`.
+
+Without any custom preset at all, the stock `rapidocr` preset also works as long as
+the checkpoints are present — just pass the language per request:
+
+```json
+{"options": {"ocr_preset": "rapidocr", "ocr_lang": ["eslav"]}}
+```
 
 Alternatively, allow fully custom per-request OCR config and send the same options as
 `ocr_custom_config` directly:
@@ -284,9 +287,7 @@ export DOCLING_SERVE_ALLOW_CUSTOM_OCR_CONFIG=true
   "ocr_custom_config": {
     "kind": "rapidocr",
     "backend": "onnxruntime",
-    "lang": ["english"],
-    "rec_model_path": "/abs/path/eslav_PP-OCRv5_rec_mobile.onnx",
-    "rec_keys_path": "/abs/path/ppocrv5_eslav_dict.txt"
+    "lang": ["eslav"]
   }
 }}
 ```
