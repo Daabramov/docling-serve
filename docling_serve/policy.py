@@ -115,6 +115,7 @@ class ServicePolicy:
     max_images_scale: float
     allow_external_plugins: bool
     allowed_ocr_presets: frozenset[str]
+    rapidocr_preset_ids: frozenset[str]
     allowed_source_types: frozenset[str]
     allowed_target_types: frozenset[str]
     callbacks_enabled: bool
@@ -247,6 +248,16 @@ def build_service_policy(settings: DoclingServeSettings) -> ServicePolicy:
     # Admin-defined custom presets are valid preset identifiers too, even though
     # they are not registered engine kinds in the OCR factory.
     registered_ocr_presets |= set(settings.custom_ocr_presets.keys())
+
+    # Presets whose engine is RapidOCR: only for those does ocr_lang need the
+    # script-token rewrite below. "auto" resolves to default_ocr_preset.
+    rapidocr_preset_ids = {"rapidocr"} | {
+        preset_id
+        for preset_id, preset in settings.custom_ocr_presets.items()
+        if isinstance(preset, dict) and preset.get("kind") == "rapidocr"
+    }
+    if settings.default_ocr_preset in rapidocr_preset_ids:
+        rapidocr_preset_ids.add("auto")
     if settings.allowed_ocr_presets is None:
         allowed_ocr_presets = registered_ocr_presets
     else:
@@ -288,6 +299,7 @@ def build_service_policy(settings: DoclingServeSettings) -> ServicePolicy:
         max_images_scale=settings.max_images_scale,
         allow_external_plugins=settings.allow_external_plugins,
         allowed_ocr_presets=frozenset(allowed_ocr_presets),
+        rapidocr_preset_ids=frozenset(rapidocr_preset_ids),
         allowed_source_types=allowed_source_types,
         allowed_target_types=allowed_target_types,
         callbacks_enabled=True,
@@ -321,6 +333,32 @@ def resolve_default_target(policy: ServicePolicy) -> TargetRequest:
     return InBodyTarget()
 
 
+# RapidOCR picks exactly one recognition model per request and only knows
+# script/group tokens, not ISO language codes: "ru" raises ValueError outright.
+# Callers and third-party integrations naturally send "ru"/"en", so map those onto
+# the script model that actually serves them. The Cyrillic models carry Latin
+# letters and digits in their dictionaries, so one of them covers mixed RU/EN text
+# and any additional language in the request would only be dropped with a warning.
+_RAPIDOCR_ESLAV_ALIASES = frozenset(
+    {"ru", "rus", "russian", "uk", "ukr", "ukrainian", "be", "bel", "belarusian"}
+)
+_RAPIDOCR_CYRILLIC_ALIASES = frozenset(
+    {"bg", "bul", "bulgarian", "sr", "srp", "serbian", "mk", "macedonian"}
+)
+
+
+def _normalize_rapidocr_langs(langs: list[str]) -> list[str] | None:
+    """Map requested languages onto a RapidOCR script model, or None if unchanged."""
+    lowered = [lang.strip().lower().replace("_", "-").split("-")[0] for lang in langs]
+    if any(lang in _RAPIDOCR_ESLAV_ALIASES for lang in lowered):
+        resolved = ["eslav"]
+    elif any(lang in _RAPIDOCR_CYRILLIC_ALIASES for lang in lowered):
+        resolved = ["cyrillic"]
+    else:
+        return None
+    return resolved if resolved != list(langs) else None
+
+
 def normalize_convert_options(
     options: ConvertDocumentsOptions, policy: ServicePolicy
 ) -> ConvertDocumentsOptions:
@@ -328,6 +366,14 @@ def normalize_convert_options(
 
     if options.document_timeout is None:
         updates["document_timeout"] = policy.max_document_timeout
+
+    # A caller-supplied ocr_lang overrides the preset's own language, so an
+    # integration sending "ru" would otherwise defeat a Cyrillic preset and fail
+    # the whole conversion. Rewrite it to the script model that serves it.
+    if options.ocr_lang and options.ocr_preset in policy.rapidocr_preset_ids:
+        resolved_langs = _normalize_rapidocr_langs(options.ocr_lang)
+        if resolved_langs is not None:
+            updates["ocr_lang"] = resolved_langs
 
     # Placeholder export mode discards all image data, so generating images would
     # be wasted work. Coerce the include_* flags off rather than rejecting the

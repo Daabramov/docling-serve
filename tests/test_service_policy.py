@@ -603,3 +603,46 @@ def test_custom_ocr_config_allowed_when_enabled():
         ),
         policy,
     )
+
+
+def test_rapidocr_ocr_lang_aliases_are_normalized():
+    """A caller sending ISO codes must not defeat a Cyrillic RapidOCR preset.
+
+    ocr_lang overrides the preset's own language downstream, and RapidOCR only
+    knows script tokens, so "ru" would otherwise abort the conversion.
+    """
+    policy = build_service_policy(
+        DoclingServeSettings(
+            custom_ocr_presets={
+                "rapidocr_ru_en": {"kind": "rapidocr", "backend": "onnxruntime"}
+            }
+        )
+    )
+
+    normalized = normalize_convert_options(
+        ConvertDocumentsOptions(ocr_preset="rapidocr_ru_en", ocr_lang=["ru", "en"]),
+        policy,
+    )
+
+    assert normalized.ocr_lang == ["eslav"]
+
+
+def test_rapidocr_ocr_lang_left_alone_for_supported_tokens():
+    policy = build_service_policy(DoclingServeSettings())
+
+    normalized = normalize_convert_options(
+        ConvertDocumentsOptions(ocr_preset="rapidocr", ocr_lang=["eslav"]), policy
+    )
+
+    assert normalized.ocr_lang == ["eslav"]
+
+
+def test_ocr_lang_untouched_for_non_rapidocr_presets():
+    """Tesseract and EasyOCR accept ISO codes, so their languages must survive."""
+    policy = build_service_policy(DoclingServeSettings())
+
+    normalized = normalize_convert_options(
+        ConvertDocumentsOptions(ocr_preset="tesseract", ocr_lang=["rus", "eng"]), policy
+    )
+
+    assert normalized.ocr_lang == ["rus", "eng"]

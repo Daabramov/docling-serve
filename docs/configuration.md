@@ -268,6 +268,15 @@ export DOCLING_SERVE_CUSTOM_OCR_PRESETS='{
 
 Then request it per conversion with `"ocr_preset": "rapidocr_ru_en"`.
 
+Requests may also send `ocr_lang` alongside the preset — note that it *overrides*
+the preset's own language. Because RapidOCR only understands script tokens, plain
+ISO codes are rewritten before they reach the engine: `ru`/`uk`/`be` (and their
+`rus`/`russian`/`ru-RU` spellings) become `eslav`, and other Cyrillic languages
+become `cyrillic`. Any extra language in the same request is dropped, since the
+Cyrillic dictionaries already cover Latin letters and digits. So an integration
+sending `ocr_lang=ru&ocr_lang=en` keeps working unchanged. Languages for other
+engines (Tesseract, EasyOCR) are passed through untouched.
+
 Without any custom preset at all, the stock `rapidocr` preset also works as long as
 the checkpoints are present — just pass the language per request:
 
